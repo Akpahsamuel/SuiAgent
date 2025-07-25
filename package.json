@@ -1,0 +1,30 @@
+{
+  "name": "sui-agent",
+  "version": "1.0.0",
+  "description": "A simple Sui blockchain agent using LangChain and official Mysten Sui TypeScript SDK",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@getnimbus/sui-agent-kit": "^0.1.25",
+    "@langchain/ollama": "^0.2.3",
+    "@langchain/openai": "latest",
+    "@mysten/bcs": "^1.0.0",
+    "@mysten/sui": "^1.0.0",
+    "dotenv": "^16.3.1",
+    "langchain": "latest"
+  },
+  "keywords": [
+    "sui",
+    "blockchain",
+    "agent",
+    "langchain",
+    "ai",
+    "mysten"
+  ],
+  "author": "",
+  "license": "MIT"
+}

@@ -1,19 +1,21 @@
 {
   "name": "sui-agent",
   "version": "1.0.0",
-  "description": "A simple Sui blockchain agent using LangChain and official Mysten Sui TypeScript SDK",
+  "description": "A Sui blockchain agent using the official Sui Agent Kit and LangChain",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "interactive": "node index.js --interactive",
+    "pnpm:start": "pnpm start",
+    "pnpm:dev": "pnpm dev",
+    "pnpm:interactive": "pnpm interactive"
   },
   "dependencies": {
     "@getnimbus/sui-agent-kit": "^0.1.25",
-    "@langchain/ollama": "^0.2.3",
+    "@langchain/core": "^0.3.68",
     "@langchain/openai": "latest",
-    "@mysten/bcs": "^1.0.0",
-    "@mysten/sui": "^1.0.0",
     "dotenv": "^16.3.1",
     "langchain": "latest"
   },
@@ -23,7 +25,8 @@
     "agent",
     "langchain",
     "ai",
-    "mysten"
+    "mysten",
+    "sui-agent-kit"
   ],
   "author": "",
   "license": "MIT"

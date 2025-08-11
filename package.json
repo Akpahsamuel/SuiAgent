@@ -16,6 +16,7 @@
     "@getnimbus/sui-agent-kit": "^0.1.25",
     "@langchain/core": "^0.3.68",
     "@langchain/openai": "latest",
+    "@mysten/sui": "^1.37.1",
     "dotenv": "^16.3.1",
     "langchain": "latest"
   },

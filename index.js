@@ -2,7 +2,11 @@ import 'dotenv/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { BufferMemory } from 'langchain/memory';
 import { SuiAgentKit, createSuiTools } from '@getnimbus/sui-agent-kit';
+import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
+import { DynamicTool } from '@langchain/core/tools';
+import { MIST_PER_SUI } from '@mysten/sui/utils';
 
 console.log('🚀 SUI Agent Kit - Powered by @getnimbus/sui-agent-kit\n');
 
@@ -14,6 +18,32 @@ const suiAgentKit = new SuiAgentKit(
   process.env.OPENAI_API_KEY
 );
 
+// Initialize Sui Client for transaction history
+const network = process.env.SUI_NETWORK || 'testnet';
+const rpcUrl = process.env.SUI_RPC_URL || (network === 'mainnet' ? 'https://fullnode.mainnet.sui.io:443' : 'https://fullnode.testnet.sui.io:443');
+const suiClient = new SuiClient({ url: rpcUrl });
+
+// Helper function to convert MIST to SUI
+const mistToSui = (mistAmount) => {
+  return Number(mistAmount) / Number(MIST_PER_SUI);
+};
+
+// Helper function to format token amounts
+const formatTokenAmount = (amount, coinType) => {
+  if (coinType.includes('::sui::SUI')) {
+    // Convert MIST to SUI for native SUI tokens
+    const suiAmount = mistToSui(Math.abs(amount));
+    return `${suiAmount.toFixed(9)} SUI`;
+  } else if (coinType.includes('usdc') || coinType.includes('USDC')) {
+    // USDC typically has 6 decimals
+    const usdcAmount = Math.abs(amount) / 1000000;
+    return `${usdcAmount.toFixed(2)} USDC`;
+  } else {
+    // For other tokens, show raw amount
+    return `${Math.abs(amount)} tokens`;
+  }
+};
+
 // Initialize the LLM with tool calling capabilities
 const llm = new ChatOpenAI({
   openAIApiKey: process.env.OPENAI_API_KEY,
@@ -21,18 +51,224 @@ const llm = new ChatOpenAI({
   temperature: 0
 });
 
-// Create the prompt template
+// Create conversation memory
+const memory = new BufferMemory({
+  memoryKey: 'chat_history',
+  returnMessages: true,
+  inputKey: 'input',
+  outputKey: 'output'
+});
+
+// Create custom transaction history tool using DynamicTool
+const customTransactionTools = [
+  new DynamicTool({
+    name: 'get_transaction_history',
+    description: 'Get the actual transaction history (list of transactions) for the user wallet, not just current balances',
+    func: async () => {
+      try {
+        // First get the wallet address
+        const walletAddress = await suiAgentKit.getWalletAddress();
+        console.log('Getting transactions for wallet:', walletAddress.substring(0, 10) + '...');
+        
+        // Get transactions with error handling - include ALL transaction data
+        let allTxs = [];
+        
+        try {
+          const sentTxs = await suiClient.queryTransactionBlocks({
+            filter: { FromAddress: walletAddress },
+            options: {
+              showEffects: true,
+              showBalanceChanges: true,
+              showObjectChanges: true,
+              showEvents: true,
+              showInput: true
+            },
+            limit: 15,
+            order: 'descending'
+          });
+          allTxs = [...(sentTxs.data || [])];
+        } catch (sentError) {
+          console.log('Error getting sent transactions:', sentError.message);
+        }
+
+        try {
+          const receivedTxs = await suiClient.queryTransactionBlocks({
+            filter: { ToAddress: walletAddress },
+            options: {
+              showEffects: true,
+              showBalanceChanges: true,
+              showObjectChanges: true,
+              showEvents: true,
+              showInput: true
+            },
+            limit: 15,
+            order: 'descending'
+          });
+          allTxs = [...allTxs, ...(receivedTxs.data || [])];
+        } catch (receivedError) {
+          console.log('Error getting received transactions:', receivedError.message);
+        }
+
+        if (allTxs.length === 0) {
+          return `No transaction history found for wallet address: ${walletAddress}`;
+        }
+
+        // Remove duplicates and sort by timestamp
+        const uniqueTxs = allTxs.filter((tx, index, self) => 
+          index === self.findIndex(t => t.digest === tx.digest)
+        ).sort((a, b) => 
+          Number(b.timestampMs || 0) - Number(a.timestampMs || 0)
+        ).slice(0, 8); // Show more transactions
+
+        // Format each transaction with comprehensive details
+        const transactions = uniqueTxs.map((tx, index) => {
+          const timestamp = tx.timestampMs ? new Date(Number(tx.timestampMs)).toLocaleString() : 'Unknown';
+          const status = tx.effects?.status?.status || 'Unknown';
+          
+          // Determine transaction type and description
+          let transactionType = 'Transaction';
+          let transactionDetails = [];
+          
+          // Check for balance changes (token transfers)
+          if (tx.balanceChanges && tx.balanceChanges.length > 0) {
+            const changes = tx.balanceChanges.map(change => {
+              const amount = Number(change.amount);
+              let ownerAddress = '';
+              
+              if (typeof change.owner === 'string') {
+                ownerAddress = change.owner;
+              } else if (change.owner && change.owner.AddressOwner) {
+                ownerAddress = change.owner.AddressOwner;
+              } else if (change.owner && typeof change.owner === 'object') {
+                ownerAddress = JSON.stringify(change.owner);
+              }
+              
+              const shortAddress = ownerAddress.length > 8 ? ownerAddress.substring(0, 8) + '...' : ownerAddress;
+              
+              if (change.coinType.includes('::sui::SUI')) {
+                const suiAmount = Math.abs(amount) / 1000000000;
+                if (amount < 0) {
+                  return `Sent ${suiAmount.toFixed(9)} SUI to ${shortAddress}`;
+                } else {
+                  return `Received ${suiAmount.toFixed(9)} SUI from ${shortAddress}`;
+                }
+              } else if (change.coinType.includes('usdc') || change.coinType.includes('USDC')) {
+                const usdcAmount = Math.abs(amount) / 1000000;
+                if (amount < 0) {
+                  return `Sent ${usdcAmount.toFixed(2)} USDC to ${shortAddress}`;
+                } else {
+                  return `Received ${usdcAmount.toFixed(2)} USDC from ${shortAddress}`;
+                }
+              } else {
+                return `${amount < 0 ? 'Sent' : 'Received'} ${Math.abs(amount)} ${change.coinType.split('::').pop()}`;
+              }
+            });
+            transactionDetails.push(...changes);
+          }
+          
+          // Check for object changes (NFTs, objects, smart contracts)
+          if (tx.objectChanges && tx.objectChanges.length > 0) {
+            const objectChanges = tx.objectChanges.map(change => {
+              if (change.type === 'created') {
+                return `Created ${change.objectType || 'object'}`;
+              } else if (change.type === 'transferred') {
+                return `Transferred ${change.objectType || 'object'}`;
+              } else if (change.type === 'mutated') {
+                return `Modified ${change.objectType || 'object'}`;
+              } else if (change.type === 'deleted') {
+                return `Deleted ${change.objectType || 'object'}`;
+              }
+              return `Object change: ${change.type}`;
+            });
+            transactionDetails.push(...objectChanges);
+          }
+          
+          // Check for events (DeFi, smart contract interactions)
+          if (tx.events && tx.events.length > 0) {
+            const events = tx.events.map(event => {
+              if (event.type.includes('swap') || event.type.includes('Swap')) {
+                return 'Token swap';
+              } else if (event.type.includes('stake') || event.type.includes('Stake')) {
+                return 'Staking operation';
+              } else if (event.type.includes('liquidity') || event.type.includes('Liquidity')) {
+                return 'Liquidity operation';
+              } else if (event.type.includes('mint') || event.type.includes('Mint')) {
+                return 'Token minting';
+              } else if (event.type.includes('burn') || event.type.includes('Burn')) {
+                return 'Token burning';
+              }
+              return `Event: ${event.type.split('::').pop()}`;
+            });
+            transactionDetails.push(...events);
+          }
+          
+          // Check for smart contract calls
+          if (tx.transaction && tx.transaction.data && tx.transaction.data.sender === walletAddress) {
+            if (tx.transaction.data.transactions && tx.transaction.data.transactions.length > 0) {
+              const calls = tx.transaction.data.transactions.map(t => {
+                if (t.kind === 'MoveCall') {
+                  return `Called ${t.target.split('::').pop()}`;
+                } else if (t.kind === 'TransferObjects') {
+                  return 'Object transfer';
+                } else if (t.kind === 'SplitCoins') {
+                  return 'Coin splitting';
+                } else if (t.kind === 'MergeCoins') {
+                  return 'Coin merging';
+                }
+                return `Operation: ${t.kind}`;
+              });
+              transactionDetails.push(...calls);
+            }
+          }
+          
+          // If no specific details found, show generic info
+          if (transactionDetails.length === 0) {
+            transactionDetails.push('Blockchain operation');
+          }
+          
+          // Create main transaction summary
+          const mainSummary = transactionDetails[0] || 'Transaction';
+          
+          return `${index + 1}. **${mainSummary}**
+   • Time: ${timestamp}
+   • Status: ${status}
+   • Tx ID: ${tx.digest.substring(0, 12)}...
+   ${transactionDetails.length > 1 ? `• Additional: ${transactionDetails.slice(1).join(', ')}` : ''}`;
+        });
+
+        return `📋 **Complete Transaction History:**
+
+${transactions.join('\n\n')}
+
+💡 This shows your ${uniqueTxs.length} most recent transactions including:
+• Token transfers (send/receive)
+• NFT operations
+• Smart contract calls
+• DeFi interactions
+• Object operations
+• Any other blockchain activities`;
+        
+      } catch (error) {
+        console.error('Transaction history error:', error);
+        return `Error fetching transaction history: ${error.message}. Please try again.`;
+      }
+    }
+  })
+];
+
+// Create the prompt template with conversation context
 const prompt = ChatPromptTemplate.fromMessages([
   ['system', `You are a Sui blockchain assistant powered by the Sui Agent Kit. 
    You can help users with comprehensive Sui blockchain operations including:
    
    BALANCE & TOKENS:
-   - Check SUI and custom token balances
+   - Check SUI and custom token balances using sui_get_holding
    - Get token metadata and information
    - Check asset holdings
    
    TRANSACTIONS:
-   - View transaction history using sui_get_holding and other relevant tools
+   - View current wallet balances using sui_get_holding 
+   - View ACTUAL transaction history (list of past transactions) using get_transaction_history
    - Send SUI tokens to addresses
    - Transfer objects and NFTs
    
@@ -51,26 +287,75 @@ const prompt = ChatPromptTemplate.fromMessages([
    - Check gas prices
    - View network statistics
    
+   CONVERSATION CONTEXT:
+   - Remember previous messages and maintain context
+   - Reference previous actions and results when relevant
+   - Build upon previous conversations naturally
+   - Only start fresh when the user explicitly changes topics
+   - If user says "interesting" or similar responses, acknowledge their interest and continue the conversation
+   - Always consider the chat history when formulating responses
+   
+   CRITICAL BALANCE VALIDATION RULES:
+   - NEVER agree to send tokens without first checking the user's current balance
+   - ALWAYS use sui_get_holding or getWalletHolding to verify available balance first
+   - If user asks to send more than they have, immediately check their balance and inform them
+   - Account for transaction fees (typically 0.001-0.002 SUI) when calculating transferable amounts
+   - Never suggest transfers that exceed the user's available balance minus fees
+   - When showing balances, always mention if the amount is sufficient for transfers
+   - If balance is insufficient, suggest smaller amounts or explain the limitation
+   
+   TRANSFER WORKFLOW:
+   1. ALWAYS check current balance first using balance checking tools
+   2. Compare requested amount with available balance
+   3. If insufficient: "You have X SUI but want to send Y SUI. Insufficient balance."
+   4. If sufficient: Proceed with transfer details
+   5. Always account for transaction fees in calculations
+   
+   TRANSACTION HISTORY VS WALLET HOLDINGS:
+   1. When users ask about "my balance", "what's in my wallet", "my holdings" → Use sui_get_holding
+   2. When users ask about "transaction history", "my transactions", "past transactions" → Use get_transaction_history
+   3. IMPORTANT DIFFERENCE:
+      - sui_get_holding = current wallet balances/assets (what you have now)
+      - get_transaction_history = list of past transactions you've made (transaction history)
+   4. When users ask for transaction history, use get_transaction_history to show actual list of transactions
+   5. Display transaction history with timestamps, amounts, recipients, and status
+   
    IMPORTANT: When users ask about "my transactions" or "transaction history":
-   1. First get their wallet address using sui_get_wallet_address
-   2. Then get their holdings using sui_get_holding
-   3. If they need more detailed transaction info, explain what's available
+   1. Use get_transaction_history tool to get the actual list of past transactions
+   2. Display transaction details including timestamps, amounts, recipients, and status
+   3. Do NOT just show current balances - show actual transaction history
+   4. NEVER give generic responses - always fetch and display actual transaction data
    
    When users ask about "my" anything, use the connected wallet.
    Always explain blockchain data in simple, understandable terms.
-   Convert MIST to SUI for better readability (1 SUI = 1,000,000,000 MIST).`],
+   Convert MIST to SUI for better readability (1 SUI = 1,000,000,000 MIST).
+   
+   TRANSFER VALIDATION EXAMPLE:
+   - User asks: "Can I send 11 SUI?"
+   - Agent MUST first check balance using sui_get_holding
+   - If balance is 6 SUI: "You currently have 6 SUI, which is insufficient to send 11 SUI. 
+     You can send up to approximately 5.998 SUI (accounting for ~0.002 SUI transaction fee). 
+     Would you like to send a smaller amount instead?"
+   - NEVER agree to send more than available balance!
+   
+   TRANSACTION HISTORY EXAMPLES:
+   - "Show me my transaction history" → Use get_transaction_history (shows list of past transactions)
+   - "What's in my wallet?" → Use sui_get_holding (shows current balances)
+   - "Check my wallet" → Use sui_get_holding (shows current balances)
+   - "My past transactions" → Use get_transaction_history (shows list of past transactions)
+   - Always display the actual data, never generic responses`],
+  ['placeholder', '{chat_history}'],
   ['human', '{input}'],
   ['placeholder', '{agent_scratchpad}']
 ]);
 
 // Create Sui tools using the createSuiTools function
-const tools = createSuiTools(suiAgentKit);
+const originalTools = createSuiTools(suiAgentKit);
 
-console.log(`🛠️  Available Sui Agent Kit Tools: ${tools.length} tools loaded\n`);
-tools.forEach((tool, index) => {
-  console.log(`   ${index + 1}. ${tool.name}: ${tool.description.slice(0, 60)}...`);
-});
-console.log('');
+// Combine original tools with custom transaction history tool
+const tools = [...originalTools, ...customTransactionTools];
+
+console.log(`🛠️  Available Tools: ${tools.length} total (${originalTools.length} Sui Agent Kit + ${customTransactionTools.length} custom tools)\n`);
 
 // Create the agent using the newer createToolCallingAgent
 const agent = await createToolCallingAgent({
@@ -79,25 +364,29 @@ const agent = await createToolCallingAgent({
   prompt
 });
 
-// Create the agent executor
+// Create the agent executor with memory
 const agentExecutor = new AgentExecutor({
   agent,
   tools,
-  verbose: true,
-  maxIterations: 5,
-  returnIntermediateSteps: true
+  verbose: false, // Disabled verbose mode
+  maxIterations: 15, // Increased to handle transaction processing
+  returnIntermediateSteps: true,
+  memory: memory
 });
 
-// Function to run the agent
+// Function to run the agent with conversation context
 async function runAgent(userInput) {
   try {
-    console.log(`\n🤖 Processing: "${userInput}"\n`);
+    // Get the current chat history from memory
+    const chatHistory = await memory.loadMemoryVariables({});
+    console.log(`\n📝 Chat History Length: ${chatHistory.chat_history ? chatHistory.chat_history.length : 0}`);
     
     const result = await agentExecutor.invoke({
-      input: userInput
+      input: userInput,
+      chat_history: chatHistory.chat_history || []
     });
     
-    console.log(`\n✅ Response: ${result.output}\n`);
+    console.log(`\n✅ ${result.output}\n`);
     return result.output;
   } catch (error) {
     console.error('❌ Error:', error.message);
@@ -105,9 +394,9 @@ async function runAgent(userInput) {
   }
 }
 
-// Interactive mode
+// Interactive mode with conversation memory
 async function interactiveMode() {
-  console.log('💬 Interactive Mode - Type "exit" to quit\n');
+  console.log('💬 Interactive Mode - Type "exit" to quit, "clear" to reset conversation\n');
   
   const readline = await import('readline');
   const rl = readline.createInterface({
@@ -120,6 +409,13 @@ async function interactiveMode() {
       if (input.toLowerCase() === 'exit') {
         console.log('👋 Goodbye!');
         rl.close();
+        return;
+      }
+      
+      if (input.toLowerCase() === 'clear') {
+        console.log('🧹 Conversation memory cleared. Starting fresh!\n');
+        memory.clear();
+        askQuestion();
         return;
       }
       
@@ -153,7 +449,7 @@ async function main() {
         console.log(`   ${index + 1}. "${example}"`);
       });
       
-      console.log('\n💡 Run with --interactive flag for interactive mode: npm start -- --interactive\n');
+      console.log('\n💡 Run with --interactive flag for interactive mode: pnpm start -- --interactive\n');
       
       // Run a simple demo
       await runAgent('What is my SUI balance?');

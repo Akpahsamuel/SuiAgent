@@ -63,12 +63,65 @@ const memory = new BufferMemory({
 const customTransactionTools = [
   new DynamicTool({
     name: 'get_transaction_history',
-    description: 'Get the actual transaction history (list of transactions) for the user wallet, not just current balances',
-    func: async () => {
+    description: 'Get the actual transaction history (list of transactions) for the user wallet, not just current balances. Accepts time filters like "last 7 days", "this month", "last week", "today", "yesterday", or specific date ranges.',
+    func: async (input) => {
       try {
+        // Parse time filter from input
+        let timeFilter = 'all'; // default: show all transactions
+        let daysBack = 0;
+        let startDate = null;
+        let endDate = new Date();
+        
+        if (input) {
+          const inputLower = input.toLowerCase().trim();
+          
+          // Parse common time expressions
+          if (inputLower.includes('today')) {
+            timeFilter = 'today';
+            startDate = new Date();
+            startDate.setHours(0, 0, 0, 0);
+          } else if (inputLower.includes('yesterday')) {
+            timeFilter = 'yesterday';
+            startDate = new Date();
+            startDate.setDate(startDate.getDate() - 1);
+            startDate.setHours(0, 0, 0, 0);
+            endDate = new Date(startDate);
+            endDate.setHours(23, 59, 59, 999);
+          } else if (inputLower.includes('week') || inputLower.includes('7 days')) {
+            timeFilter = 'last week';
+            daysBack = 7;
+            startDate = new Date();
+            startDate.setDate(startDate.getDate() - daysBack);
+          } else if (inputLower.includes('month') || inputLower.includes('30 days')) {
+            timeFilter = 'last month';
+            daysBack = 30;
+            startDate = new Date();
+            startDate.setDate(startDate.getDate() - daysBack);
+          } else if (inputLower.includes('3 months') || inputLower.includes('90 days')) {
+            timeFilter = 'last 3 months';
+            daysBack = 90;
+            startDate = new Date();
+            startDate.setDate(startDate.getDate() - daysBack);
+          } else if (inputLower.includes('year') || inputLower.includes('365 days')) {
+            timeFilter = 'last year';
+            daysBack = 365;
+            startDate = new Date();
+            startDate.setDate(startDate.getDate() - daysBack);
+          } else if (inputLower.includes('days')) {
+            // Extract number of days (e.g., "last 14 days")
+            const daysMatch = inputLower.match(/(\d+)\s*days?/);
+            if (daysMatch) {
+              daysBack = parseInt(daysMatch[1]);
+              timeFilter = `last ${daysBack} days`;
+              startDate = new Date();
+              startDate.setDate(startDate.getDate() - daysBack);
+            }
+          }
+        }
+        
         // First get the wallet address
         const walletAddress = await suiAgentKit.getWalletAddress();
-        console.log('Getting transactions for wallet:', walletAddress.substring(0, 10) + '...');
+        console.log(`Getting transactions for wallet: ${walletAddress.substring(0, 10)}... (${timeFilter})`);
         
         // Get transactions with error handling - include ALL transaction data
         let allTxs = [];
@@ -83,7 +136,7 @@ const customTransactionTools = [
               showEvents: true,
               showInput: true
             },
-            limit: 15,
+            limit: 50, // Increased limit for better filtering
             order: 'descending'
           });
           allTxs = [...(sentTxs.data || [])];
@@ -101,7 +154,7 @@ const customTransactionTools = [
               showEvents: true,
               showInput: true
             },
-            limit: 15,
+            limit: 50, // Increased limit for better filtering
             order: 'descending'
           });
           allTxs = [...allTxs, ...(receivedTxs.data || [])];
@@ -114,14 +167,27 @@ const customTransactionTools = [
         }
 
         // Remove duplicates and sort by timestamp
-        const uniqueTxs = allTxs.filter((tx, index, self) => 
+        let uniqueTxs = allTxs.filter((tx, index, self) => 
           index === self.findIndex(t => t.digest === tx.digest)
         ).sort((a, b) => 
           Number(b.timestampMs || 0) - Number(a.timestampMs || 0)
-        ).slice(0, 8); // Show more transactions
+        );
+        
+        // Apply time filter if specified
+        if (startDate && timeFilter !== 'all') {
+          const startTimestamp = startDate.getTime();
+          uniqueTxs = uniqueTxs.filter(tx => {
+            const txTimestamp = Number(tx.timestampMs || 0);
+            return txTimestamp >= startTimestamp;
+          });
+          console.log(`Filtered to ${uniqueTxs.length} transactions from ${timeFilter}`);
+        }
+        
+        // Limit results for display
+        const displayTxs = uniqueTxs.slice(0, 10);
 
         // Format each transaction with comprehensive details
-        const transactions = uniqueTxs.map((tx, index) => {
+        const transactions = displayTxs.map((tx, index) => {
           const timestamp = tx.timestampMs ? new Date(Number(tx.timestampMs)).toLocaleString() : 'Unknown';
           const status = tx.effects?.status?.status || 'Unknown';
           
@@ -236,17 +302,32 @@ const customTransactionTools = [
    ${transactionDetails.length > 1 ? `• Additional: ${transactionDetails.slice(1).join(', ')}` : ''}`;
         });
 
-        return `📋 **Complete Transaction History:**
+        // Create time filter summary
+        let timeSummary = '';
+        if (timeFilter !== 'all') {
+          timeSummary = `\n⏰ **Time Filter:** ${timeFilter}`;
+          if (startDate) {
+            timeSummary += ` (from ${startDate.toLocaleDateString()})`;
+          }
+        }
+
+        return `📋 **Transaction History${timeFilter !== 'all' ? ` - ${timeFilter}` : ''}**
+
+${timeSummary}
 
 ${transactions.join('\n\n')}
 
-💡 This shows your ${uniqueTxs.length} most recent transactions including:
-• Token transfers (send/receive)
-• NFT operations
-• Smart contract calls
-• DeFi interactions
-• Object operations
-• Any other blockchain activities`;
+💡 **Available Time Filters:**
+• "today" - Today's transactions
+• "yesterday" - Yesterday's transactions  
+• "last week" or "7 days" - Last 7 days
+• "last month" or "30 days" - Last 30 days
+• "last 3 months" or "90 days" - Last 3 months
+• "last year" or "365 days" - Last year
+• "last X days" - Custom number of days
+• No filter - All transactions
+
+📊 Showing ${displayTxs.length} of ${uniqueTxs.length} total transactions${timeFilter !== 'all' ? ` in ${timeFilter}` : ''}.`;
         
       } catch (error) {
         console.error('Transaction history error:', error);
@@ -320,11 +401,24 @@ const prompt = ChatPromptTemplate.fromMessages([
    4. When users ask for transaction history, use get_transaction_history to show actual list of transactions
    5. Display transaction history with timestamps, amounts, recipients, and status
    
-   IMPORTANT: When users ask about "my transactions" or "transaction history":
-   1. Use get_transaction_history tool to get the actual list of past transactions
-   2. Display transaction details including timestamps, amounts, recipients, and status
-   3. Do NOT just show current balances - show actual transaction history
-   4. NEVER give generic responses - always fetch and display actual transaction data
+   TIME-BASED TRANSACTION FILTERING:
+   The get_transaction_history tool now supports time-based filtering:
+   - "Show my transactions from today" → Shows only today's transactions
+   - "My transactions from yesterday" → Shows yesterday's transactions
+   - "Last week's transactions" → Shows last 7 days
+   - "Transactions from last month" → Shows last 30 days
+   - "Last 14 days" → Shows custom time range
+   - "This month's activity" → Shows current month
+   - No time filter = shows all transactions
+   
+   TRANSACTION HISTORY EXAMPLES:
+   - "Show me my transaction history" → Use get_transaction_history (shows list of past transactions)
+   - "What's in my wallet?" → Use sui_get_holding (shows current balances)
+   - "Check my wallet" → Use sui_get_holding (shows current balances)
+   - "My past transactions" → Use get_transaction_history (shows list of past transactions)
+   - "Show me today's transactions" → Use get_transaction_history with "today" filter
+   - "Last week's activity" → Use get_transaction_history with "last week" filter
+   - Always display the actual data, never generic responses
    
    When users ask about "my" anything, use the connected wallet.
    Always explain blockchain data in simple, understandable terms.

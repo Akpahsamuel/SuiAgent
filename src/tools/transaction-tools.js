@@ -140,6 +140,60 @@ export const getTransactionHistoryTool = () => new DynamicTool({
         
         let transactionDetails = [];
         
+        let hasExternalRecipient = false;
+        let externalRecipientAddress = '';
+        let actualRecipientAddress = '';
+        let externalSenderAddress = '';
+        
+        if (tx.transaction?.data?.transaction?.kind === 'ProgrammableTransaction') {
+          const programmableTx = tx.transaction.data.transaction;
+          
+          if (programmableTx.transactions) {
+            for (const t of programmableTx.transactions) {
+              if (t.TransferObjects) {
+                const transferArgs = t.TransferObjects;
+                if (transferArgs.length >= 2) {
+                  const recipientInput = transferArgs[1];
+                  
+                  if (recipientInput && recipientInput.Input !== undefined) {
+                    const inputIndex = recipientInput.Input;
+                    if (programmableTx.inputs && programmableTx.inputs[inputIndex]) {
+                      const input = programmableTx.inputs[inputIndex];
+                      if (input.type === 'pure' && input.valueType === 'address') {
+                        const recipientAddress = input.value;
+                        if (recipientAddress && recipientAddress !== walletAddress) {
+                          hasExternalRecipient = true;
+                          externalRecipientAddress = recipientAddress;
+                          actualRecipientAddress = recipientAddress;
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        
+        if (tx.transaction && tx.transaction.data && tx.transaction.data.transactions) {
+          for (const t of tx.transaction.data.transactions) {
+            if (t.kind === 'TransferSui' && t.arguments && t.arguments.length >= 2) {
+              const recipient = t.arguments[1];
+              if (recipient && typeof recipient === 'string' && recipient !== walletAddress) {
+                hasExternalRecipient = true;
+                externalRecipientAddress = recipient;
+                actualRecipientAddress = recipient;
+                break;
+              }
+            }
+          }
+        }
+        
+        if (tx.transaction?.data?.sender && tx.transaction.data.sender !== walletAddress) {
+          externalSenderAddress = tx.transaction.data.sender;
+        }
+        
         if (tx.balanceChanges && tx.balanceChanges.length > 0) {
           const changes = tx.balanceChanges.map(change => {
             const amount = Number(change.amount);
@@ -162,13 +216,21 @@ export const getTransactionHistoryTool = () => new DynamicTool({
             if (change.coinType.includes('::sui::SUI')) {
               const suiAmount = Math.abs(amount) / 1000000000;
               if (amount < 0) {
-                if (ownerAddress === walletAddress) {
+                if (actualRecipientAddress && actualRecipientAddress !== walletAddress) {
+                  const shortRecipient = actualRecipientAddress.length > 8 ? 
+                    actualRecipientAddress.substring(0, 8) + '...' : actualRecipientAddress;
+                  return `Sent ${suiAmount.toFixed(9)} SUI to ${shortRecipient}`;
+                } else if (ownerAddress === walletAddress) {
                   return `Sent ${suiAmount.toFixed(9)} SUI to yourself (same wallet)`;
                 } else {
                   return `Sent ${suiAmount.toFixed(9)} SUI to ${shortAddress}`;
                 }
               } else {
-                if (ownerAddress === walletAddress) {
+                if (externalSenderAddress && externalSenderAddress !== walletAddress) {
+                  const shortSender = externalSenderAddress.length > 8 ? 
+                    externalSenderAddress.substring(0, 8) + '...' : externalSenderAddress;
+                  return `Received ${suiAmount.toFixed(9)} SUI from ${shortSender}`;
+                } else if (ownerAddress === walletAddress) {
                   return `Received ${suiAmount.toFixed(9)} SUI from yourself (same wallet)`;
                 } else {
                   return `Received ${suiAmount.toFixed(9)} SUI from ${shortAddress}`;
@@ -177,13 +239,21 @@ export const getTransactionHistoryTool = () => new DynamicTool({
             } else if (change.coinType.includes('usdc') || change.coinType.includes('USDC')) {
               const usdcAmount = Math.abs(amount) / 1000000;
               if (amount < 0) {
-                if (ownerAddress === walletAddress) {
+                if (actualRecipientAddress && actualRecipientAddress !== walletAddress) {
+                  const shortRecipient = actualRecipientAddress.length > 8 ? 
+                    actualRecipientAddress.substring(0, 8) + '...' : actualRecipientAddress;
+                  return `Sent ${usdcAmount.toFixed(2)} USDC to ${shortRecipient}`;
+                } else if (ownerAddress === walletAddress) {
                   return `Sent ${usdcAmount.toFixed(2)} USDC to yourself (same wallet)`;
                 } else {
                   return `Sent ${usdcAmount.toFixed(2)} USDC to ${shortAddress}`;
                 }
               } else {
-                if (ownerAddress === walletAddress) {
+                if (externalSenderAddress && externalSenderAddress !== walletAddress) {
+                  const shortSender = externalSenderAddress.length > 8 ? 
+                    externalSenderAddress.substring(0, 8) + '...' : externalSenderAddress;
+                  return `Received ${usdcAmount.toFixed(2)} USDC from ${shortSender}`;
+                } else if (ownerAddress === walletAddress) {
                   return `Received ${usdcAmount.toFixed(2)} USDC from yourself (same wallet)`;
                 } else {
                   return `Received ${usdcAmount.toFixed(2)} USDC from ${shortAddress}`;
@@ -192,13 +262,21 @@ export const getTransactionHistoryTool = () => new DynamicTool({
             } else {
               const tokenName = change.coinType.split('::').pop();
               if (amount < 0) {
-                if (ownerAddress === walletAddress) {
+                if (actualRecipientAddress && actualRecipientAddress !== walletAddress) {
+                  const shortRecipient = actualRecipientAddress.length > 8 ? 
+                    actualRecipientAddress.substring(0, 8) + '...' : actualRecipientAddress;
+                  return `Sent ${Math.abs(amount)} ${tokenName} to ${shortRecipient}`;
+                } else if (ownerAddress === walletAddress) {
                   return `Sent ${Math.abs(amount)} ${tokenName} to yourself (same wallet)`;
                 } else {
                   return `Sent ${Math.abs(amount)} ${tokenName} to ${shortAddress}`;
                 }
               } else {
-                if (ownerAddress === walletAddress) {
+                if (externalSenderAddress && externalSenderAddress !== walletAddress) {
+                  const shortSender = externalSenderAddress.length > 8 ? 
+                    externalSenderAddress.substring(0, 8) + '...' : externalSenderAddress;
+                  return `Received ${Math.abs(amount)} ${tokenName} from ${shortSender}`;
+                } else if (ownerAddress === walletAddress) {
                   return `Received ${Math.abs(amount)} ${tokenName} from yourself (same wallet)`;
                 } else {
                   return `Received ${Math.abs(amount)} ${tokenName} from ${shortAddress}`;
@@ -269,52 +347,6 @@ export const getTransactionHistoryTool = () => new DynamicTool({
               return `Operation: ${t.kind}`;
             });
             transactionDetails.push(...calls);
-          }
-        }
-        
-        let hasExternalRecipient = false;
-        let externalRecipientAddress = '';
-        
-        if (tx.transaction && tx.transaction.data && tx.transaction.data.transactions) {
-          for (const t of tx.transaction.data.transactions) {
-            if (t.kind === 'TransferSui' && t.arguments && t.arguments.length >= 2) {
-              const recipient = t.arguments[1];
-              if (recipient && typeof recipient === 'string' && recipient !== walletAddress) {
-                hasExternalRecipient = true;
-                externalRecipientAddress = recipient;
-                break;
-              }
-            }
-          }
-        }
-        
-        if (tx.transaction?.data?.transaction?.kind === 'ProgrammableTransaction') {
-          const programmableTx = tx.transaction.data.transaction;
-          
-          if (programmableTx.transactions) {
-            for (const t of programmableTx.transactions) {
-              if (t.TransferObjects) {
-                const transferArgs = t.TransferObjects;
-                if (transferArgs.length >= 2) {
-                  const recipientInput = transferArgs[1];
-                  
-                  if (recipientInput && recipientInput.Input !== undefined) {
-                    const inputIndex = recipientInput.Input;
-                    if (programmableTx.inputs && programmableTx.inputs[inputIndex]) {
-                      const input = programmableTx.inputs[inputIndex];
-                      if (input.type === 'pure' && input.valueType === 'address') {
-                        const recipientAddress = input.value;
-                        if (recipientAddress && recipientAddress !== walletAddress) {
-                          hasExternalRecipient = true;
-                          externalRecipientAddress = recipientAddress;
-                          break;
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
           }
         }
         

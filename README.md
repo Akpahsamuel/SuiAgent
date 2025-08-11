@@ -1,16 +1,18 @@
 # SUI Agent Kit
 
-A clean, focused Sui blockchain agent built with the official [@getnimbus/sui-agent-kit](https://www.npmjs.com/package/@getnimbus/sui-agent-kit) and LangChain.
+A clean, focused Sui blockchain agent built with the official [@getnimbus/sui-agent-kit](https://www.npmjs.com/package/@getnimbus/sui-agent-kit) and LangChain, enhanced with custom transaction analysis tools.
 
 ## ✨ Features
 
-- 🔍 Check SUI token balances
+- 🔍 Check SUI and USDC token balances
 - 📋 View owned objects and NFTs
-- 📊 Get transaction history
+- 📊 Get detailed transaction history with time-based filtering
+- 💰 Calculate SUI/USDC summaries for specific time periods
 - 🔐 Wallet management and operations
 - 🤖 Natural language interaction using OpenAI GPT
 - 🔗 Built with Sui Agent Kit for reliable blockchain operations
-- 🛠️ Access to all Sui Agent Kit tools automatically
+- 🛠️ Access to all Sui Agent Kit tools + custom transaction analysis tools
+- ⏰ Time-based transaction filtering (today, yesterday, last week, etc.)
 
 ## 🚀 Quick Start
 
@@ -61,32 +63,65 @@ This starts an interactive chat where you can ask questions like:
 
 - "What's my SUI balance?"
 - "Show me my recent transactions"
+- "How much SUI did I send last week?"
+- "Calculate my SUI summary from yesterday"
 - "What objects do I own?"
 - "Get network information"
 - "Check gas prices"
 
 ## 🎯 What the Agent Can Do
 
-The agent automatically gets access to all tools provided by the Sui Agent Kit, including:
+The agent automatically gets access to all tools provided by the Sui Agent Kit, plus custom transaction analysis tools:
 
+### **Core Sui Agent Kit Tools**
 - **Balance Management** - Check SUI and custom token balances
-- **Transaction Operations** - View history, send tokens, transfer objects
+- **Transaction Operations** - Send tokens, transfer objects
 - **Object Management** - List owned objects, get details, transfer NFTs
 - **DeFi Integration** - Interact with DEX platforms, check liquidity pools
 - **Network Information** - Get status, gas prices, statistics
+
+### **Custom Transaction Analysis Tools**
+- **Transaction History** - View detailed transaction history with time filtering
+- **SUI Summary Calculator** - Calculate total SUI/USDC sent/received in time periods
+
+## 🕒 Time-Based Transaction Filtering
+
+The custom tools support intelligent time filtering:
+
+| Filter | Description | Example |
+|--------|-------------|---------|
+| `today` | Today's transactions | "Show my transactions from today" |
+| `yesterday` | Yesterday's transactions | "My transactions from yesterday" |
+| `last week` | Last 7 days | "Last week's transactions" |
+| `last month` | Last 30 days | "Transactions from last month" |
+| `last X days` | Custom time range | "Last 14 days" |
+| `this month` | Current month | "This month's activity" |
+
+## 📊 Transaction Analysis Examples
+
+### **Transaction History**
+- "Show me my transaction history" → Lists all past transactions
+- "What transactions did I make yesterday?" → Yesterday's transactions only
+- "My activity from last week" → Last 7 days of transactions
+
+### **SUI Summary & Analytics**
+- "How much SUI did I send last week?" → Total SUI sent in last 7 days
+- "Calculate my SUI summary from yesterday" → Yesterday's totals
+- "My SUI flow in last 30 days" → Monthly summary with net flow
 
 ## 🏗️ Architecture
 
 ```
 User Input (Natural Language)
         ↓
-LangChain Agent with Sui Agent Kit Tools
+LangChain Agent with Sui Agent Kit + Custom Tools
         ↓
-Sui Agent Kit (Handles all blockchain operations)
+├── Sui Agent Kit (Core blockchain operations)
+└── Custom Transaction Tools (History & Analytics)
         ↓
 Sui Network (Testnet/Mainnet)
         ↓
-Formatted Response
+Formatted Response with Transaction Data
 ```
 
 ## 🔧 Configuration
@@ -128,6 +163,11 @@ Formatted Response
    - The `SUI_PRIVATE_KEY` is optional for read-only operations
    - Only needed if you want to make transactions
 
+4. **Transaction data discrepancies**
+   - Use `get_transaction_history` for detailed transaction lists
+   - Use `get_sui_summary` for calculated totals
+   - Cross-reference both tools for complete understanding
+
 ## 📚 Resources
 
 - [Sui Agent Kit Documentation](https://www.npmjs.com/package/@getnimbus/sui-agent-kit)
@@ -139,12 +179,13 @@ Formatted Response
 
 Once you have the basic agent working, you can:
 
-- **Add custom tools** specific to your use case
-- **Integrate with more Sui protocols** and services
+- **Add more custom tools** for specific use cases
+- **Integrate with additional Sui protocols** and services
 - **Create a web interface** instead of CLI
-- **Add memory** so the agent remembers conversation context
+- **Enhance transaction analytics** with charts and graphs
+- **Add more token type support** beyond SUI and USDC
 - **Extend with additional blockchain operations**
 
 ---
 
-**🎯 Your SUI Agent is now powered by the official Sui Agent Kit and ready for production use!**
+**🎯 Your SUI Agent is now powered by the official Sui Agent Kit with enhanced transaction analysis capabilities!**
